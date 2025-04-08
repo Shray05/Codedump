@@ -679,3 +679,151 @@ def process_data_and_generate_report(data, config):
 
     return report
 
+
+# AI Response:
+def process_data(data, config):
+    """
+    This function processes a large dataset based on the provided configuration.
+    It performs various data cleaning, transformation, and analysis steps.
+
+    Args:
+        data: A list of dictionaries representing the dataset. Each dictionary
+              represents a single data point.
+        config: A dictionary containing configuration parameters for the
+                processing steps.
+
+    Returns:
+        A dictionary containing the processed data and analysis results.
+    """
+
+    processed_data = []
+    analysis_results = {}
+
+    # Data Cleaning
+    if config.get("clean_data", True):
+        print("Cleaning data...")
+        for item in data:
+            cleaned_item = {}
+            for key, value in item.items():
+                if isinstance(value, str):
+                    cleaned_value = value.strip()
+                    if config.get("lowercase", False):
+                        cleaned_value = cleaned_value.lower()
+                    cleaned_item[key] = cleaned_value
+                elif isinstance(value, (int, float)):
+                    cleaned_item[key] = value
+                else:
+                    cleaned_item[key] = value  # Keep other data types as is
+            processed_data.append(cleaned_item)
+    else:
+        processed_data = data.copy() # Create a copy to avoid modifying original
+        print("Skipping data cleaning.")
+
+
+    # Data Transformation
+    if config.get("transform_data", False):
+        print("Transforming data...")
+        transformation_type = config.get("transformation_type", "default")
+        if transformation_type == "default":
+            for item in processed_data:
+                try:
+                    item["transformed_value"] = item["numeric_value"] * 2 # Example transformation
+                except KeyError:
+                    item["transformed_value"] = None
+        elif transformation_type == "custom":
+            transformation_function = config.get("transformation_function")
+            if transformation_function:
+                for item in processed_data:
+                    try:
+                        item["transformed_value"] = transformation_function(item)
+                    except Exception as e:
+                        print(f"Error applying custom transformation: {e}")
+                        item["transformed_value"] = None
+        else:
+            print("Invalid transformation type.")
+
+    # Data Filtering
+    if config.get("filter_data", False):
+        print("Filtering data...")
+        filter_criteria = config.get("filter_criteria")
+        if filter_criteria:
+            filtered_data = []
+            for item in processed_data:
+                try:
+                    if filter_criteria(item):
+                        filtered_data.append(item)
+                except Exception as e:
+                    print(f"Error applying filter criteria: {e}")
+            processed_data = filtered_data
+        else:
+            print("No filter criteria provided.")
+
+    # Data Aggregation
+    if config.get("aggregate_data", False):
+        print("Aggregating data...")
+        aggregation_key = config.get("aggregation_key")
+        if aggregation_key:
+            aggregated_data = {}
+            for item in processed_data:
+                key = item.get(aggregation_key)
+                if key:
+                    if key not in aggregated_data:
+                        aggregated_data[key] = []
+                    aggregated_data[key].append(item)
+            analysis_results["aggregated_data"] = aggregated_data
+        else:
+            print("No aggregation key provided.")
+
+    # Data Analysis
+    if config.get("analyze_data", False):
+        print("Analyzing data...")
+        # Example analysis: Calculate the average of a numeric field
+        numeric_field = config.get("numeric_field")
+        if numeric_field:
+            total = 0
+            count = 0
+            for item in processed_data:
+                try:
+                    value = item.get(numeric_field)
+                    if isinstance(value, (int, float)):
+                        total += value
+                        count += 1
+                except Exception as e:
+                    print(f"Error accessing numeric field: {e}")
+            if count > 0:
+                average = total / count
+                analysis_results["average_" + numeric_field] = average
+            else:
+                analysis_results["average_" + numeric_field] = None
+
+    # Additional analysis example : Calculate the frequency of a categorical field
+    if config.get("analyze_data", False):
+        categorical_field = config.get("categorical_field")
+        if categorical_field:
+            frequencies = {}
+            for item in processed_data:
+                try:
+                    value = item.get(categorical_field)
+                    if value:
+                        if value not in frequencies:
+                            frequencies[value] = 0
+                        frequencies[value] += 1
+                except Exception as e:
+                    print(f"Error accessing categorical field: {e}")
+            analysis_results["frequencies_" + categorical_field] = frequencies
+
+    # Feature Engineering
+    if config.get("feature_engineering", False):
+        print("Performing feature engineering...")
+        new_feature_name = config.get("new_feature_name")
+        feature_function = config.get("feature_function")
+        if new_feature_name and feature_function:
+            for item in processed_data:
+                try:
+                    item[new_feature_name] = feature_function(item)
+                except Exception as e:
+                    print(f"Error creating new feature: {e}")
+                    item[new_feature_name] = None
+
+    return {"processed_data": processed_data, "analysis_results": analysis_results}
+
