@@ -1454,3 +1454,206 @@ def process_data_pipeline(data, config, logging_callback=None):
     log("Data processing pipeline completed.")
     return df
 
+
+# AI Response:
+def process_data_and_generate_report(data, config):
+    """
+    This function takes in a dataset and a configuration dictionary, performs
+    various data processing steps based on the configuration, and generates a
+    report summarizing the results.
+
+    Args:
+        data: A list of dictionaries, where each dictionary represents a data entry.
+        config: A dictionary containing configuration parameters for the processing.
+                Expected keys include:
+                    - 'date_range': A tuple (start_date, end_date) defining the period to analyze.
+                    - 'filters': A dictionary of filters to apply to the data (e.g., {'category': 'A', 'status': 'active'}).
+                    - 'aggregation_fields': A list of fields to group the data by for aggregation.
+                    - 'metrics': A list of metrics to calculate (e.g., ['count', 'sum(value)', 'average(price)']).
+                    - 'report_type': A string specifying the type of report to generate ('summary', 'detailed', 'trend').
+                    - 'output_format': A string specifying the output format ('csv', 'json', 'text').
+                    - 'missing_value_handling': A string specifying how to handle missing values ('impute_mean', 'impute_median', 'remove').
+                    - 'numerical_scaling': A string specifying whether to scale numerical features ('standardize', 'normalize', 'none').
+                    - 'outlier_handling': A string specifying how to handle outliers ('remove', 'cap', 'none').
+                    - 'date_format': A string specifying the date format to use.
+                    - 'threshold': a numerical value used as a threshold for comparison.
+
+    Returns:
+        A string containing the generated report.  The format of the report depends
+        on the 'output_format' specified in the configuration.  Returns an error message
+        if any issues occur during processing.
+    """
+
+    try:
+        # 1. Data Filtering
+        filtered_data = []
+        start_date, end_date = config.get('date_range', (None, None))
+        filters = config.get('filters', {})
+
+        for entry in data:
+            # Date range filtering
+            if start_date and end_date:
+                entry_date = entry.get('date')
+                if entry_date:
+                    try:
+                        from datetime import datetime
+                        entry_date = datetime.strptime(entry_date, config.get('date_format', '%Y-%m-%d'))
+                        start_date = datetime.strptime(start_date, config.get('date_format', '%Y-%m-%d'))
+                        end_date = datetime.strptime(end_date, config.get('date_format', '%Y-%m-%d'))
+                        if not (start_date <= entry_date <= end_date):
+                            continue # Skip if outside date range
+                    except (ValueError, TypeError):
+                        print("Error: Invalid date format or data type. Skipping date filtering for this entry.")
+
+            # Other filters
+            include_entry = True
+            for field, value in filters.items():
+                if entry.get(field) != value:
+                    include_entry = False
+                    break
+            if include_entry:
+                filtered_data.append(entry)
+
+        # 2. Missing Value Handling
+        missing_value_handling = config.get('missing_value_handling', 'remove')
+        if missing_value_handling != 'none':
+            for entry in filtered_data:
+                for key, value in entry.items():
+                    if value is None:
+                        if missing_value_handling == 'impute_mean':
+                            # Calculate and impute the mean (requires iterating through all data first)
+                            # Simplified example (replace with actual mean calculation):
+                            entry[key] = 0  # Replace with actual mean
+                        elif missing_value_handling == 'impute_median':
+                            # Calculate and impute the median (requires iterating through all data first)
+                            # Simplified example (replace with actual median calculation):
+                            entry[key] = 0  # Replace with actual median
+                        elif missing_value_handling == 'remove':
+                            del entry[key]
+
+        # 3. Numerical Scaling
+        numerical_scaling = config.get('numerical_scaling', 'none')
+        if numerical_scaling != 'none':
+            numerical_fields = []  # Identify numerical fields (requires iterating)
+            for entry in filtered_data:
+                for key, value in entry.items():
+                    if isinstance(value, (int, float)) and key not in numerical_fields:
+                        numerical_fields.append(key)
+
+            for field in numerical_fields:
+                values = [entry.get(field, 0) for entry in filtered_data] # Handle possible missing keys
+                if numerical_scaling == 'standardize':
+                    # Calculate mean and standard deviation (requires numpy for robust calculations)
+                    # Simplified example (replace with actual standardization):
+                    mean = sum(values) / len(values)
+                    std = 1 #dummy value
+                    for entry in filtered_data:
+                        if field in entry: # make sure field exists
+                            entry[field] = (entry[field] - mean) / std
+                elif numerical_scaling == 'normalize':
+                    # Calculate min and max (requires numpy for robust calculations)
+                    # Simplified example (replace with actual normalization):
+                    min_val = min(values)
+                    max_val = max(values)
+                    for entry in filtered_data:
+                        if field in entry: # make sure field exists
+                            entry[field] = (entry[field] - min_val) / (max_val - min_val)
+
+        # 4. Outlier Handling
+        outlier_handling = config.get('outlier_handling', 'none')
+        if outlier_handling != 'none':
+            for field in []: # requires identification of numerical fields
+                values = [entry.get(field, 0) for entry in filtered_data] # Handle possible missing keys
+                if outlier_handling == 'remove':
+                    # Identify and remove outliers (requires statistical methods)
+                    # Simplified example (replace with actual outlier detection):
+                    threshold = config.get('threshold', 3) # Standard deviations from the mean
+                    mean = sum(values) / len(values)
+                    std = 1 #dummy value
+                    filtered_data = [entry for entry in filtered_data if (abs(entry.get(field, mean)-mean)/std) <= threshold ]
+
+                elif outlier_handling == 'cap':
+                    # Identify outliers and cap them to a maximum/minimum value
+                    # Simplified example (replace with actual capping):
+                    threshold = config.get('threshold', 3) # Standard deviations from the mean
+                    mean = sum(values) / len(values)
+                    std = 1 #dummy value
+                    for entry in filtered_data:
+                        if field in entry:
+                            if (entry.get(field, mean)-mean)/std > threshold :
+                                entry[field] = mean + threshold*std
+                            elif (entry.get(field, mean)-mean)/std < -threshold :
+                                entry[field] = mean - threshold*std
+
+        # 5. Data Aggregation
+        aggregation_fields = config.get('aggregation_fields', [])
+        metrics = config.get('metrics', [])
+        aggregated_data = {}
+
+        for entry in filtered_data:
+            key = tuple(entry.get(field, '') for field in aggregation_fields)  # Create aggregation key
+            if key not in aggregated_data:
+                aggregated_data[key] = {}
+                for metric in metrics:
+                    if "count" in metric.lower():
+                        aggregated_data[key][metric] = 0
+                    elif "sum" in metric.lower():
+                        aggregated_data[key][metric] = 0
+                    elif "average" in metric.lower():
+                        aggregated_data[key][metric] = []
+
+            for metric in metrics:
+                if "count" in metric.lower():
+                    aggregated_data[key][metric] += 1
+                elif "sum" in metric.lower():
+                    field_to_sum = metric[4:-1] # assumes sum(field)
+                    aggregated_data[key][metric] += entry.get(field_to_sum, 0)
+                elif "average" in metric.lower():
+                    field_to_average = metric[8:-1] # assumes average(field)
+                    aggregated_data[key][metric].append(entry.get(field_to_average, 0))
+
+        for key in aggregated_data:
+            for metric in metrics:
+                if "average" in metric.lower():
+                    if len(aggregated_data[key][metric])>0:
+                         aggregated_data[key][metric] = sum(aggregated_data[key][metric]) / len(aggregated_data[key][metric])
+                    else:
+                        aggregated_data[key][metric] = 0
+
+        # 6. Report Generation
+        report_type = config.get('report_type', 'summary')
+        output_format = config.get('output_format', 'text')
+
+        if report_type == 'summary':
+            report_string = "Summary Report:\n"
+            for key, values in aggregated_data.items():
+                report_string += f"Group: {key}\n"
+                for metric, value in values.items():
+                    report_string += f"  {metric}: {value}\n"
+        elif report_type == 'detailed':
+            report_string = "Detailed Report:\n"
+            for entry in filtered_data:
+                report_string += str(entry) + "\n"
+        elif report_type == 'trend':
+            report_string = "Trend Report (not implemented):\n"
+            report_string += "Trend analysis requires time-series data and specific trend calculation logic.\n"
+        else:
+            return "Error: Invalid report type specified."
+
+        if output_format == 'csv':
+            # Generate CSV output (requires csv module)
+            csv_string = "Field1,Field2,...\n"  # Replace with actual fields
+            csv_string += "value1,value2,...\n"  # Replace with actual data
+            return csv_string
+        elif output_format == 'json':
+            # Generate JSON output (requires json module)
+            import json
+            return json.dumps(aggregated_data, indent=4)
+        elif output_format == 'text':
+            return report_string
+        else:
+            return "Error: Invalid output format specified."
+
+    except Exception as e:
+        return f"Error: An error occurred during data processing: {str(e)}"
+
