@@ -1196,3 +1196,261 @@ def process_data(data, operation_type="basic", scaling_factor=1.0, custom_functi
             print(f"An unexpected error occurred and invalid error_handling type was specified: {e}")
             return None
 
+
+# AI Response:
+def process_data_pipeline(data, config, logging_callback=None):
+    """
+    This function processes a large dataset through a complex pipeline,
+    performing various data cleaning, transformation, and analysis steps
+    based on the provided configuration.  It supports customizable logging.
+
+    Args:
+        data (list or pandas.DataFrame): The input data to be processed.
+            Can be a list of dictionaries or a pandas DataFrame.
+        config (dict): A dictionary containing configuration parameters
+            for the data processing pipeline.  This should include
+            sections for data cleaning, transformation, analysis, and
+            output.  Example:
+            {
+                "cleaning": {
+                    "remove_duplicates": True,
+                    "missing_value_strategy": "mean", #or "median" or "remove"
+                    "columns_to_remove": ["column1", "column2"]
+                },
+                "transformation": {
+                    "numeric_scaling": "standardize", #or "normalize" or None
+                    "categorical_encoding": "one_hot", # or "label" or None,
+                    "date_format": "%Y-%m-%d"
+                },
+                "analysis": {
+                    "descriptive_statistics": True,
+                    "correlation_analysis": True,
+                    "feature_importance": False #requires model and target column
+                },
+                "output": {
+                    "format": "csv", # or "json" or "pickle",
+                    "filepath": "output/processed_data",
+                    "save_intermediate": True,
+                    "intermediate_filepath": "output/intermediate_data"
+
+                },
+                "model": {
+                    "algorithm": "linear_regression", # or "logistic_regression", "random_forest"
+                    "target_column": "target"
+                }
+            }
+        logging_callback (function, optional): A callback function that
+            can be used to log progress and messages during the data
+            processing pipeline.  It should accept a string as input.
+            Defaults to None.
+
+    Returns:
+        pandas.DataFrame: The processed data as a pandas DataFrame.
+    """
+    import pandas as pd
+    import numpy as np
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, LabelEncoder
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.feature_selection import SelectFromModel
+    import os
+
+    def log(message):
+        if logging_callback:
+            logging_callback(message)
+        else:
+            print(message)
+
+    # 1. Data Loading and Initial Handling
+    log("Starting data processing pipeline...")
+    if isinstance(data, list):
+        log("Input data is a list. Converting to DataFrame.")
+        df = pd.DataFrame(data)
+    elif isinstance(data, pd.DataFrame):
+        log("Input data is a DataFrame.")
+        df = data.copy()  # Create a copy to avoid modifying the original
+    else:
+        raise ValueError("Unsupported data type.  Must be a list or pandas DataFrame.")
+
+    log(f"Data loaded. Shape: {df.shape}")
+
+    # 2. Data Cleaning
+    log("Starting data cleaning...")
+    cleaning_config = config.get("cleaning", {})
+
+    # 2.1 Remove Duplicates
+    if cleaning_config.get("remove_duplicates", False):
+        log("Removing duplicate rows...")
+        df = df.drop_duplicates()
+        log(f"Duplicates removed. Shape: {df.shape}")
+
+    # 2.2 Handle Missing Values
+    missing_value_strategy = cleaning_config.get("missing_value_strategy", None)
+    if missing_value_strategy:
+        log(f"Handling missing values using strategy: {missing_value_strategy}")
+        if missing_value_strategy in ["mean", "median"]:
+            imputer = SimpleImputer(strategy=missing_value_strategy)
+            df[df.select_dtypes(include=np.number).columns] = imputer.fit_transform(df.select_dtypes(include=np.number)) # only apply to numeric columns
+        elif missing_value_strategy == "remove":
+            df = df.dropna()
+            log("Rows with missing values removed.")
+        else:
+            log("Invalid missing value strategy. Skipping missing value handling.")
+
+    # 2.3 Remove Specified Columns
+    columns_to_remove = cleaning_config.get("columns_to_remove", [])
+    if columns_to_remove:
+        log(f"Removing columns: {columns_to_remove}")
+        df = df.drop(columns=columns_to_remove, errors='ignore')  # errors='ignore' prevents errors if column doesn't exist
+        log(f"Columns removed. Shape: {df.shape}")
+
+    #3. Data Transformation
+    log("Starting data transformation...")
+    transformation_config = config.get("transformation", {})
+
+    # 3.1 Numeric Scaling
+    numeric_scaling = transformation_config.get("numeric_scaling", None)
+    numeric_cols = df.select_dtypes(include=np.number).columns
+    if numeric_scaling and len(numeric_cols) > 0:
+        log(f"Applying numeric scaling: {numeric_scaling}")
+        if numeric_scaling == "standardize":
+            scaler = StandardScaler()
+            df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+        elif numeric_scaling == "normalize":
+            scaler = MinMaxScaler()
+            df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+        else:
+            log("Invalid numeric scaling method. Skipping.")
+
+    # 3.2 Categorical Encoding
+    categorical_encoding = transformation_config.get("categorical_encoding", None)
+    categorical_cols = df.select_dtypes(include='object').columns
+    if categorical_encoding and len(categorical_cols) > 0:
+        log(f"Applying categorical encoding: {categorical_encoding}")
+        if categorical_encoding == "one_hot":
+            encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False) #sparse=False for returning a numpy array
+            encoded_data = encoder.fit_transform(df[categorical_cols])
+            encoded_df = pd.DataFrame(encoded_data, columns=encoder.get_feature_names_out(categorical_cols), index=df.index)
+            df = pd.concat([df, encoded_df], axis=1)
+            df = df.drop(columns=categorical_cols) #remove original categorical cols
+        elif categorical_encoding == "label":
+            for col in categorical_cols:
+                le = LabelEncoder()
+                df[col] = le.fit_transform(df[col])
+        else:
+            log("Invalid categorical encoding method. Skipping.")
+
+    # 3.3 Date Formatting
+    date_format = transformation_config.get("date_format", None)
+    if date_format:
+        log(f"Attempting to format date columns using format: {date_format}")
+        for col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col], format=date_format, errors='raise') #raise error if can't convert
+            except (ValueError, TypeError):
+                log(f"Column {col} is not a date column or could not be converted.")
+
+    #4. Data Analysis
+    log("Starting data analysis...")
+    analysis_config = config.get("analysis", {})
+
+    # 4.1 Descriptive Statistics
+    if analysis_config.get("descriptive_statistics", False):
+        log("Calculating descriptive statistics...")
+        descriptive_stats = df.describe()
+        log(str(descriptive_stats))
+
+    # 4.2 Correlation Analysis
+    if analysis_config.get("correlation_analysis", False):
+        log("Calculating correlation matrix...")
+        correlation_matrix = df.corr()
+        log(str(correlation_matrix))
+
+    # 4.3 Feature Importance (requires model and target)
+    if analysis_config.get("feature_importance", False):
+        model_config = config.get("model", {})
+        algorithm = model_config.get("algorithm", None)
+        target_column = model_config.get("target_column", None)
+
+        if algorithm and target_column and target_column in df.columns:
+            log(f"Calculating feature importance using {algorithm} and target column {target_column}")
+            X = df.drop(columns=[target_column])
+            y = df[target_column]
+
+            # Handle categorical features if necessary, if not already handled in transformation
+            categorical_cols_for_model = X.select_dtypes(include='object').columns
+            if len(categorical_cols_for_model) > 0:
+                X = pd.get_dummies(X, columns=categorical_cols_for_model, dummy_na=False) #one hot encode for model if not already encoded in transformation
+
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42) #add split
+
+            if algorithm == "linear_regression":
+                model = LinearRegression()
+            elif algorithm == "logistic_regression":
+                model = LogisticRegression(solver='liblinear', random_state=42) #added solver and random_state
+            elif algorithm == "random_forest":
+                model = RandomForestClassifier(random_state=42) #added random_state
+            else:
+                log("Unsupported algorithm for feature importance calculation. Skipping.")
+                model = None
+
+            if model:
+                model.fit(X_train, y_train) #use training data
+
+                if hasattr(model, 'feature_importances_'):
+                    importances = model.feature_importances_
+                elif hasattr(model, 'coef_'): #for linear and logistic regression
+                    importances = np.abs(model.coef_) #absolute value of coefficients
+                else:
+                    importances = None
+
+                if importances is not None:
+                    feature_importances = pd.DataFrame({'feature': X.columns, 'importance': importances})
+                    feature_importances = feature_importances.sort_values('importance', ascending=False).reset_index(drop=True)
+                    log(str(feature_importances))
+
+        else:
+            log("Missing algorithm or target column configuration. Skipping feature importance calculation.")
+
+    # 5. Output
+    log("Starting data output...")
+    output_config = config.get("output", {})
+    output_format = output_config.get("format", "csv")
+    output_filepath = output_config.get("filepath", "output/processed_data")
+
+    # 5.1 Save Intermediate Data
+    if output_config.get("save_intermediate", False):
+        intermediate_filepath = output_config.get("intermediate_filepath", "output/intermediate_data")
+        log(f"Saving intermediate data to: {intermediate_filepath}")
+        if not os.path.exists(os.path.dirname(intermediate_filepath)):
+            os.makedirs(os.path.dirname(intermediate_filepath), exist_ok=True)  # Ensure directory exists
+
+        if output_format == "csv":
+            df.to_csv(f"{intermediate_filepath}.csv", index=False)
+        elif output_format == "json":
+            df.to_json(f"{intermediate_filepath}.json")
+        elif output_format == "pickle":
+            df.to_pickle(f"{intermediate_filepath}.pkl")
+        else:
+            log("Invalid output format. Skipping saving intermediate data.")
+
+    # 5.2 Save Final Output
+    log(f"Saving final processed data to: {output_filepath}")
+    if not os.path.exists(os.path.dirname(output_filepath)):
+        os.makedirs(os.path.dirname(output_filepath), exist_ok=True)  # Ensure directory exists
+
+    if output_format == "csv":
+        df.to_csv(f"{output_filepath}.csv", index=False)
+    elif output_format == "json":
+        df.to_json(f"{output_filepath}.json")
+    elif output_format == "pickle":
+        df.to_pickle(f"{output_filepath}.pkl")
+    else:
+        log("Invalid output format. Saving as CSV.")
+        df.to_csv(f"{output_filepath}.csv", index=False)
+
+    log("Data processing pipeline completed.")
+    return df
+
