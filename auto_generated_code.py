@@ -1657,3 +1657,210 @@ def process_data_and_generate_report(data, config):
     except Exception as e:
         return f"Error: An error occurred during data processing: {str(e)}"
 
+
+# AI Response:
+def process_data_and_generate_report(data_source, report_type="detailed", output_format="txt", filters=None, transformations=None, database_connection_string=None, api_key=None, cache_enabled=True, cache_location="temp_cache", log_level="INFO", max_retries=3):
+    """
+    This function processes data from a specified source, applies various transformations and filters,
+    and generates a report in the desired format. It supports caching, logging, and retries for robust operation.
+
+    Args:
+        data_source (str): The source of the data.  Can be a file path, database table name, or API endpoint.
+        report_type (str, optional): The type of report to generate ("summary", "detailed", "custom"). Defaults to "detailed".
+        output_format (str, optional): The format of the report ("txt", "csv", "json", "html"). Defaults to "txt".
+        filters (dict, optional): A dictionary of filters to apply to the data.  Keys are field names, values are filter criteria (e.g., {"age": "> 25", "city": "New York"}). Defaults to None.
+        transformations (list, optional): A list of transformations to apply to the data. Each transformation is a tuple: (field_name, transformation_function). Defaults to None.
+        database_connection_string (str, optional): The connection string for a database data source. Required if data_source is a database table. Defaults to None.
+        api_key (str, optional): The API key for an API data source. Required if data_source is an API endpoint. Defaults to None.
+        cache_enabled (bool, optional): Whether to enable caching of data. Defaults to True.
+        cache_location (str, optional): The location to store cached data. Defaults to "temp_cache".
+        log_level (str, optional): The logging level ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"). Defaults to "INFO".
+        max_retries (int, optional): The maximum number of retries for failed data retrieval. Defaults to 3.
+
+    Returns:
+        str: The generated report as a string.
+    """
+
+    import os
+    import json
+    import csv
+    import logging
+    import time
+    import requests
+    import sqlite3  # Example database support
+
+    # --- Setup Logging ---
+    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO),
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
+    # --- Data Retrieval Function ---
+    def retrieve_data(source, retries_left=max_retries):
+        try:
+            if os.path.isfile(source):  # File Source
+                logger.info(f"Retrieving data from file: {source}")
+                with open(source, 'r') as f:
+                    if source.endswith(".json"):
+                        data = json.load(f)
+                    else:
+                        data = f.readlines() # Assuming line-separated data
+                return data
+            elif source.startswith("http"):  # API Source
+                logger.info(f"Retrieving data from API endpoint: {source}")
+                headers = {}
+                if api_key:
+                    headers['Authorization'] = f'Bearer {api_key}'
+                response = requests.get(source, headers=headers)
+                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                return response.json()
+            else: # Assume database table source
+                if not database_connection_string:
+                    raise ValueError("Database connection string is required for database source.")
+                logger.info(f"Retrieving data from database table: {source}")
+                conn = sqlite3.connect(database_connection_string) # Replace with appropriate DB connector
+                cursor = conn.cursor()
+                cursor.execute(f"SELECT * FROM {source}")
+                data = cursor.fetchall()
+                conn.close()
+                return data
+        except Exception as e:
+            logger.error(f"Error retrieving data from {source}: {e}")
+            if retries_left > 0:
+                logger.warning(f"Retrying data retrieval in 5 seconds (retries left: {retries_left - 1}).")
+                time.sleep(5)
+                return retrieve_data(source, retries_left - 1)
+            else:
+                logger.critical(f"Maximum retries reached for data retrieval from {source}. Aborting.")
+                raise  # Re-raise the exception to stop execution
+
+    # --- Caching Function ---
+    def load_from_cache(cache_key):
+        cache_file = os.path.join(cache_location, f"{cache_key}.json")
+        if os.path.exists(cache_file):
+            logger.info(f"Loading data from cache: {cache_file}")
+            try:
+                with open(cache_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load from cache {cache_file}: {e}")
+                return None
+        return None
+
+    def save_to_cache(cache_key, data):
+        if not os.path.exists(cache_location):
+            os.makedirs(cache_location)
+        cache_file = os.path.join(cache_location, f"{cache_key}.json")
+        logger.info(f"Saving data to cache: {cache_file}")
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.error(f"Failed to save to cache {cache_file}: {e}")
+
+    # --- Data Loading and Caching Logic ---
+    cache_key = f"{data_source}_{report_type}_{output_format}"  # Create a cache key
+    if cache_enabled:
+        cached_data = load_from_cache(cache_key)
+        if cached_data:
+            data = cached_data
+        else:
+            data = retrieve_data(data_source)
+            save_to_cache(cache_key, data)
+    else:
+        data = retrieve_data(data_source)
+
+    # --- Data Filtering ---
+    if filters:
+        logger.info(f"Applying filters: {filters}")
+        filtered_data = []
+        for item in data:
+             # VERY simplistic filter implementation - needs robust parsing for real-world use.
+             # Assuming each filter is an exact match for the value.
+             passes_filters = True
+             for field, criteria in filters.items():
+                 if field not in item or str(item[field]) != str(criteria):  #Adapt for list comprehensions and DB tuple access
+                     passes_filters = False
+                     break
+             if passes_filters:
+                 filtered_data.append(item)
+        data = filtered_data
+
+    # --- Data Transformation ---
+    if transformations:
+        logger.info(f"Applying transformations: {transformations}")
+        transformed_data = []
+        for item in data:
+            transformed_item = item.copy() # Important to copy if you modify the item
+            for field, transform_func in transformations:
+                if field in transformed_item:
+                    try:
+                        transformed_item[field] = transform_func(transformed_item[field])
+                    except Exception as e:
+                        logger.warning(f"Failed to apply transformation to field {field}: {e}")
+
+            transformed_data.append(transformed_item)
+        data = transformed_data
+
+    # --- Report Generation ---
+    logger.info(f"Generating report of type: {report_type} in format: {output_format}")
+
+    def generate_summary_report(data):
+        num_records = len(data)
+        summary_string = f"Summary Report:\nTotal Records: {num_records}\n"
+        # Add more summary statistics here based on the data structure
+        return summary_string
+
+    def generate_detailed_report(data):
+         report_string = "Detailed Report:\n"
+         for i, record in enumerate(data):
+            report_string += f"Record {i+1}:\n"
+            for key, value in record.items():
+                report_string += f"  {key}: {value}\n"
+            report_string += "\n"
+         return report_string
+
+    def generate_custom_report(data): # Placeholder - implement user-defined logic
+         return "Custom report generation logic not implemented yet."
+
+    if report_type == "summary":
+        report = generate_summary_report(data)
+    elif report_type == "detailed":
+        report = generate_detailed_report(data)
+    elif report_type == "custom":
+        report = generate_custom_report(data)
+    else:
+        report = "Invalid report type specified."
+
+    # --- Output Formatting ---
+    if output_format == "csv":
+        import io
+        output = io.StringIO()
+        if data: #Check data exists before attempting to generate header.
+            fieldnames = data[0].keys() if isinstance(data[0], dict) else range(len(data[0])) #Handle dicts or tuples
+            writer = csv.DictWriter(output, fieldnames=fieldnames) if isinstance(data[0], dict) else csv.writer(output) # Handle dict or list like objects
+
+            if isinstance(data[0],dict):
+                writer.writeheader()
+                writer.writerows(data)
+            else:
+                writer.writerow(fieldnames) #Write "header" with indexes as titles if tuples/lists
+                writer.writerows(data) #Iterate rows and write tuples to csv
+        else:
+            output.write("No data to export.")
+
+        report = output.getvalue()
+
+    elif output_format == "json":
+        report = json.dumps(data, indent=4)
+    elif output_format == "html": # Basic HTML generation.  Improve for styling!
+        html_report = "<html><body><h1>Report</h1><ul>"
+        for record in data:
+            html_report += "<li>" + str(record) + "</li>" # Simplistic, customize this!
+        html_report += "</ul></body></html>"
+        report = html_report
+    else: #Default to text
+        pass #Report already generated as text, no change needed
+
+    logger.info("Report generation complete.")
+    return report
+
